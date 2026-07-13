@@ -2830,8 +2830,22 @@ function openFilePicker(){ var el=byId("fileInput"); if(el) el.click(); }
             return bestCol;
         }
 
+        // Normalises a vehicle plate regardless of how spaces were inserted:
+        // "B  95 89 PXW" → "B 9589 PXW", "B  9 589 PXW" → "B 9589 PXW", etc.
+        function normalizePlate(s) {
+            s = s.replace(/\*/g, '').trim();
+            // Try to match: letter-prefix  digits(possibly broken by spaces)  letter-suffix
+            const m = s.match(/^([A-Za-z]+)\s+([\d\s]+)\s+([A-Za-z]+)$/);
+            if (m) {
+                return m[1].trim() + ' ' + m[2].replace(/\s+/g, '') + ' ' + m[3].trim();
+            }
+            // Fallback: collapse every run of spaces to one
+            return s.replace(/\s+/g, ' ');
+        }
+
         // Recognises all Medical vehicle header types: Colt Diesel, L-300, CDD (any variant), CDE (any variant)
-        const MEDICAL_VEHICLE_TYPES = ['Colt Diesel', 'L-300', 'CDD', 'CDE'];
+        // 'Not Found' covers blocks where the vehicle type wasn't matched but routes are still present.
+        const MEDICAL_VEHICLE_TYPES = ['Colt Diesel', 'L-300', 'CDD', 'CDE', 'Not Found'];
         function isMedicalVehicleHeader(mobil) {
             if (!mobil) return false;
             return MEDICAL_VEHICLE_TYPES.some(t => mobil.includes(t));
@@ -2861,6 +2875,14 @@ function openFilePicker(){ var el=byId("fileInput"); if(el) el.click(); }
                     if (nopol && drivers &&
                         !isMedicalVehicleHeader(nopol) &&
                         !isMedicalVehicleHeader(drivers)) {
+
+                        // Skip blocks with no routes (TUJUAN starting with '-') at all
+                        let hasRoute = false;
+                        for (let j = i; j < Math.min(i + 50, data.length); j++) {
+                            if (j > i && data[j].MOBIL && isMedicalVehicleHeader(data[j].MOBIL)) break;
+                            if ((data[j].TUJUAN || '').trim().startsWith('-')) { hasRoute = true; break; }
+                        }
+                        if (!hasRoute) continue;
 
                         // Check if this nopol needs special treatment (Solar + Insentif + Mel)
                         const isSpecialNopol = dataType === 'insentif-mel' && isNopolInSpecificList(nopol, specificNopols);
@@ -2939,8 +2961,20 @@ function openFilePicker(){ var el=byId("fileInput"); if(el) el.click(); }
                             }
                         }
 
-                        const cleanNopol = nopol.replace(/\*/g, '').trim();
+                        const cleanNopol = normalizePlate(nopol);
                         const cleanDrivers = cleanDriverName(drivers);
+
+                        // In insentif-mel mode, enforce a Mel floor when Insentif is present but Mel is zero
+                        if (dataType === 'insentif-mel') {
+                            const MEL_75_NOPOLS = ['B 9589 PXW', 'B 9080', 'B 9146'];
+                            const normNopol = cleanNopol.toUpperCase();
+                            const melFloor = MEL_75_NOPOLS.some(p => normNopol.includes(p.toUpperCase())) ? '75.000' : '50.000';
+                            for (let k = 0; k < value1Array.length; k++) {
+                                if (value1Array[k] && value1Array[k] !== '-' && (!value2Array[k] || value2Array[k] === '-')) {
+                                    value2Array[k] = melFloor;
+                                }
+                            }
+                        }
 
                         // For insentif-mel mode, combine the values
                         if (dataType === 'insentif-mel') {
